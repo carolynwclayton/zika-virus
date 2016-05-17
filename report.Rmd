@@ -1,0 +1,258 @@
+---
+title: "Zika Virus Twitter Exploration"
+author: "Carolyn Clayton"
+date: "May 16, 2016"
+output: pdf_document
+header-includes:
+    - \usepackage{setspace}
+    - \doublespacing
+---
+
+```{r setup, include=FALSE}
+# library(devtools)
+# devtools::install_github("hadley/ggplot2")  # Version 2.1.0.9000+ of ggplot has added functionality to labs(). This version is not yet on CRAN
+library(tidytext)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(wordcloud)
+library(RColorBrewer)
+library(rgdal)
+library(httr)
+library(R.utils)
+library(mapproj)
+library(pander)
+library(scales)
+library(png)
+library(grid)
+
+# # Example code for pulling down data from Twitter and cleaning data
+
+# setup_twitter_oauth("consumer_key", "consumer_secret", access_token = "my_access_token", access_secret = "my_access_secret")  # Replace these with tokens and secrets obtained from the twitter API. For info on how to create tokens see https://dev.twitter.com/oauth/overview/application-owner-access-tokens
+
+# data_partial <- searchTwitter('zika',  n=2000000000, retryOnRateLimit=100)
+# data_partial <- twListToDF(data_partial)
+# 
+# save(data_partial, file = "data_partial.Rda")
+# load("data_old1.Rda")
+# load("data_old2.Rda")
+
+# data_frames <- list(data_old1, data_old2, data_partial)
+# data_cat <- do.call("rbind", data_frames)
+# data_cat <- data_cat[!duplicated(data_cat), ]
+# data_cat$longitude <- as.numeric(data_cat$longitude)
+# data_cat$latitude <- as.numeric(data_cat$latitude)
+# save(data_cat, file = "data_cat.Rda")
+
+
+# # How the tidy_data dataframe was Created
+
+# # Split dataframe into one row per word
+# tidy_data <- data_cat %>%
+#   unnest_tokens(word,text)
+# 
+# # Remove common words like "the"
+# tidy_data <- tidy_data %>%
+#   anti_join(stop_words, by = "word")
+# 
+# # Remove common words like "de" and "el"
+# stop_words_foreign_languages <- tbl_df(data.frame(word = c("de", "el", "la", "por", "para", "con", "é", "los", "las", "del", "não", "em", "um", "es", "eu", "en", "na", "se", "ser", "al", "este", "esta", "esto", "sua", "à"), stringsAsFactors = FALSE))
+# tidy_data <- tidy_data %>%
+#   anti_join(stop_words_foreign_languages, by = "word")
+# 
+# # Remove common twitter words like "https" and "rt"
+# stop_words_twitter <- tbl_df(data.frame(word = c("rt", "http", "https", "t.co", "u.s"), stringsAsFactors = FALSE))
+# tidy_data <- tidy_data %>%
+#   anti_join(stop_words_twitter, by = "word")
+# 
+# save(tidy_data, file = "tidy_data.Rda")
+
+load("data_cat.Rda")
+load("tidy_data.Rda")
+
+options(scipen=999) # Do not use scientific notation
+```
+
+## Study Background
+ 
+It has been proposed that Twitter data could be used as a proxy to monitor disease outbreaks in semi-real time across the globe. It is assumed that those locations that are experiencing the outbreak are more likely to tweet about it. In this case, we wanted to analyze tweets containing mentions of Zika virus, compare frequency across time and geolocation, and conduct a sentiment analysis to determine whether tweets were more positive or more negative over time.
+
+Data was pulled from Twitter on 5/2/2016 and 5/11/2016 using the twitteR package (v. 1.1.9). Tweets were searched on the word "Zika" ignoring casing and any attached symbols (e.g. ZIKA, #zika, and @zika were also pulled). The data represented tweets from `r head(sort(data_cat$created_day), 1)` to `r tail(sort(data_cat$created_day), 1)` and contained `r format(nrow(data_cat), big.mark=",")` tweets by `r format(length(unique(data_cat$screenName)), big.mark=",")` users. For a word-by-word analysis, the tidytext package (v. 0.1.0) was used to separate tweets into individual words.
+
+## Findings
+
+```{r descriptives, echo = FALSE}
+### Frequency of tweets over time
+data_cat$created_day <- format(data_cat$created, "%B %d")
+time <- ggplot(data_cat, aes(created_day)) +
+  geom_bar(stat = "count", fill = "#0059b3") +
+  scale_x_discrete(name = "", breaks = c("April 23", "April 26", "April 29", "May 03", "May 06", "May 09")) +
+  scale_y_continuous(name = "") +
+  theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(size = 13, hjust = 0.075)) +
+  labs(title = "Frequency of Tweets Mentioning Zika Over Time")
+
+### Most frequent words
+words_tbl <- tidy_data %>%
+  count(word, sort = TRUE)
+
+### Most frequent @ mentions (receivers or retweets)
+mentions_tbl <- str_extract_all(data_cat$text, "@\\w+") %>%
+  unlist() %>%
+  tolower() %>%
+  table() %>%
+  as.data.frame() %>%
+  arrange(., desc(Freq))
+
+### Most frequent tweeters (broadcasters)
+tweeters_tbl <- table(data_cat$screenName) %>%
+  as.data.frame() %>%
+  arrange(., desc(Freq))
+
+### Most frequent hashtags
+hashtags_tbl <- str_extract_all(data_cat$text, "#\\w+") %>%
+  unlist() %>%
+  tolower() %>%
+  table() %>%
+  as.data.frame() %>%
+  arrange(., desc(Freq))
+
+### Creating a description table
+words_snapshot <- head(words_tbl, n = 5)
+words_snapshot <- cbind.data.frame(Type = "", words_snapshot, stringsAsFactors = FALSE)
+words_snapshot$Type[1] <- "Word"
+names(words_snapshot) <- c("Type", "Word", "Frequency")
+
+hashtags_snapshot <- head(hashtags_tbl, n = 5)
+hashtags_snapshot <- cbind.data.frame(Type = "", hashtags_snapshot, stringsAsFactors = FALSE)
+hashtags_snapshot$Type[1] <- "Hashtag"
+names(hashtags_snapshot) <- c("Type", "Word", "Frequency")
+
+mentions_snapshot <- head(mentions_tbl, n = 5)
+mentions_snapshot <- cbind.data.frame(Type = "", mentions_snapshot, stringsAsFactors = FALSE)
+mentions_snapshot$Type[1] <- "Mention"
+names(mentions_snapshot) <- c("Type", "Word", "Frequency")
+
+summary <- rbind(words_snapshot, hashtags_snapshot, mentions_snapshot)
+```
+
+An average of `r format(round(mean(table(data_cat$created_day)), digits = 0), big.mark=",")` tweets mentioning Zika were tweeted per day; an average of `r percent(mean(aggregate(data_cat$isRetweet, list(data_cat$created_day), mean)$x))` of which were retweets. The highest number of tweets occurred on Fridays, with a contrasting lower volume of tweets on Saturdays and Sundays.
+
+```{r echo = FALSE}
+time
+```
+
+For more meaningful results, common English, Spanish, and Portuguese words (e.g. "the", "el", and "o"), and common Twitter words (e.g. "rt" and "http") were removed. There was a great disparity in frequency of most common words and hashtags. By far the most commonly used word was "Zika," as expected given that "Zika" was the search keyword used when pulling tweets. However, it was surprising that "virus" was much less commonly used, appearing only `r percent(subset(as.data.frame(words_tbl[words_tbl$word == "virus",]), select = n, drop = TRUE)/subset(as.data.frame(words_tbl[words_tbl$word == "zika",]), select = n, drop = TRUE))` as often as "Zika." 
+
+Common hashtags are mostly as expected, with "#zika" appearing `r round(subset(as.data.frame(hashtags_tbl[hashtags_tbl$. == "#zika",]), select = Freq, drop = TRUE)/subset(as.data.frame(hashtags_tbl[2,]), select = Freq, drop = TRUE), digits = 0)` times as often as the next most-frequent hashtag. Unexpectedly, the hashtag "#6" appears frequently. This appears to be largely due to "likes" from YouTube sharing to Twitter from users who liked a Portuguese cartoon, episode 6 of which mentions Zika Virus.
+
+The top five most common mentions were more uniformly frequent. However, `r format(sum(Reduce('&', lapply(c("#6", "@YouTube", "@fecastanhari"), grepl, data_cat$text))), big.mark = ",")` tweets mentioned @YouTube, @fecastanhari, and the hashtag #6 indicating these mentions were due to synced YouTube likes from the Portuguese cartoon. The majority of remaining mentions are likely due to retweets rather than direct conversation, given that the dataset contained `r percent(mean(aggregate(data_cat$isRetweet, list(data_cat$created_day), mean)$x))` retweets and the original poster is automatically mentioned in a retweet.
+
+\singlespacing
+```{r echo = FALSE}
+pander(format(summary, big.mark=","), caption = "Five Most Common Words, Hashtags, and Mentions", split.cells = c(10, 20, 8), justify = c('left', 'left', 'left'))
+```
+
+\doublespacing
+
+```{r echo = FALSE}
+grid.raster(as.raster(readPNG("C:/Users/Allen/Dropbox/! School/Data Analysis/Project/wordcloud.png")))
+grid.text(label = "40 Most Common Hashtags",x=0.325,y=0.9,gp=gpar(cex=1.2))
+grid.text(label = "Note: Approximately sized by frequency",x=0.325,y=0.1,gp=gpar(cex=0.8))
+graphics.off()
+```
+Geospatial data was available for `r format(sum(!is.na(data_cat$longitude)), big.mark=",")` tweets. This represents `r percent(sum(!is.na(data_cat$longitude))/nrow(data_cat))` of total tweets as geolocation is an opt-in service and is only available for original tweets (i.e. not for retweets). Twitter data appears to be a poor indicator of location of Zika virus outbreaks as the majority of current cases appear in countries from Brazil to Mexico, including the Caribbean (Centers for Disease Control and Prevention, 2016). Most tweets with geospatial data were located in the Western hemisphere with a large number originating from North America, although there was also a concentration in Europe. This may be due to media coverage in North America and Europe, or a higher percentage of the population with access to or engagement with Twitter. 
+
+```{r echo = FALSE, include = FALSE}
+### Map of location of tweets
+# Get map info.
+GET("https://github.com/nvkelso/natural-earth-vector/blob/master/geojson/ne_50m_admin_0_countries.geojson.gz?raw=true",
+    write_disk("world.gz", overwrite = TRUE))
+gunzip("world.gz", overwrite = TRUE)
+world <- readOGR("world", "OGRGeoJSON")
+world <- fortify(world)
+
+data_geo <- data_cat[(complete.cases(data_cat$longitude) & complete.cases(data_cat$latitude)), ]  # Keep only rows with latitude and longitude
+
+num_geo <- format(sum(!is.na(data_cat$longitude)), big.mark=",")
+start_date <- head(sort(data_cat$created_day), 1)
+end_date <- tail(sort(data_cat$created_day), 1)
+
+worldmap <- ggplot() +
+  geom_map(data=world, map=world,
+           aes(x=long, y=lat, map_id=id), color = "#b3b3b3", fill = "#cccccc") +
+  geom_point(data = data_geo, aes(x = longitude, y = latitude, alpha = 0.1), color = "#0059b3", size = 2.5) +
+  coord_map(projection = "mercator", ylim=c(-60, 80)) +
+  theme(line = element_blank(), rect = element_blank(), plot.margin = unit(c(0,0,0,0), "lines"), legend.position = "none", 
+        axis.title = element_blank(), axis.ticks = element_blank(), axis.text = element_blank(), plot.title = element_text(size = 12.5, hjust = 0.25), plot.caption = element_text(size = 13*0.8, hjust = 0.375)) +
+  labs(title = "Location of Tweets Mentioning Zika", caption = paste("Note: Data is from ", num_geo, " tweets created between ", start_date, " and ", end_date, ".", sep = ""))
+# Note: this does not run if there is no latitude or longitude data available. 
+# Gives "Error in if (zero_range(from) || zero_range(to)) { : missing value where TRUE/FALSE needed"  
+```
+
+```{r echo = FALSE}
+worldmap
+```
+
+```{r echo = FALSE}
+# Pull the word scores from the "AFINN" lexicon, included in the tidytext package
+AFINN <- sentiments %>%
+  filter(lexicon == "AFINN") %>%
+  select(-sentiment)
+
+# Calculate sentiment scores for each tweet id
+data_sentiment_afinn <- tidy_data %>%
+  inner_join(AFINN, by = "word") %>% 
+  count(id, score) %>% 
+  mutate(score = score*n) %>% 
+  group_by(id) %>% 
+  summarise(score = sum(score)) %>%
+  left_join(data_cat[, names(data_cat) %in% c("favoriteCount", "created", 
+                                    "id", "retweetCount", "created_day", "text")], by = "id") %>%
+  cbind.data.frame(., count = 1, stringsAsFactors = FALSE)
+
+# Calculate number of tweets each day with a particular score
+data_sentiment_afinn_tbl <- data_sentiment_afinn %>%
+  count(count, score, created_day, sort = TRUE)
+
+# # Plot mean sentiment score by day for exploratory analysis
+# mean_scores <- aggregate(data_sentiment_afinn$score, list(data_sentiment_afinn$created_day), mean)
+# plot(mean_scores$Group.1, mean_scores$x)
+```
+A sentiment analysis was performed by using scoring developed by Finn, Arup, and Nielsen (AFINN, 2011). This lexicon contains English words assigned a score from -5 to 5; most words with a score of -4 or -5 are expletives. Sentiment score for a tweet is calculated as a sum of positively and negatively scored words (e.g. agonised = -3, benefit = 2) within a tweet. As such, it is possible to have a 0 score if there is an even weighting of positive and negative sentiments. For example, a tweet with a score of -10 was "Damn I just heard about that Zika shit that's crazy!" A tweet with a score of 8 was "South Korean Olympic Committee Unveils Athletes' Uniforms Designed to Protect Against Zika #funny #LOL https://t.co/v4xhqJIdQ4". Analysis was performed word-by-word so negations were un-accounted for; e.g. "Zika is not good for babies" would be reported as a positive tweet. 
+
+Sentiment scores were plotted by day, with larger points indicating a larger number of tweets at a given score. The average score of  tweets overall was `r round(mean(data_sentiment_afinn$score), digits = 1)` (SD = `r round(sd(data_sentiment_afinn$score), digits = 1)`). Tweets had a fairly constant average score near -1.0, but dipped down for 6 days from April 28 to May 3. The average score was lowest on May 2 (`r round(mean(data_sentiment_afinn$score[data_sentiment_afinn$created_day == "May 02"]), digits = 1)`, SD = `r round(sd(data_sentiment_afinn$score[data_sentiment_afinn$created_day == "May 02"]), digits = 1)`) and highest on April 24 (`r round(mean(data_sentiment_afinn$score[data_sentiment_afinn$created_day == "April 24"]), digits = 1)`, SD = `r round(sd(data_sentiment_afinn$score[data_sentiment_afinn$created_day == "April 24"]), digits = 1)`). 
+
+```{r echo = FALSE}
+# Plot the sentiments over time
+sentiments_afinn <- ggplot(data_sentiment_afinn_tbl, aes(created_day, score, color = factor(score), alpha = 0.005, size = n)) +
+  geom_point(stat = "identity", show.legend = FALSE) +
+  theme_minimal(base_size = 13) +
+  theme(plot.caption = element_text(size = 13*0.8, hjust = 0.1), plot.title = element_text(size = 13, hjust = 0.1)) +
+  labs(y = "Sentiment Score") +
+  labs(title = "Sentiment Analysis in English Tweets about the Zika Virus", caption = paste("Note: Data is from ", nrow(data_sentiment_afinn), " tweets created between ", start_date, " and ", end_date, ".\n Size of points represents number of tweets with a given score on a given day.", sep = "")) +
+  scale_x_discrete(name = "", breaks = c("April 23", "April 26", "April 29", "May 03", "May 06", "May 09")) +
+  scale_y_continuous(name = "Sentiment Score") +
+  geom_hline(yintercept = 0)
+```
+
+```{r echo = FALSE}
+sentiments_afinn
+```
+
+## Conclusions
+
+The large number of tweets mentioning Zika serves as a rich dataset for exploration of public perception about the Zika virus. English tweets analyzed with the AFINN lexicon generally had a slightly negative score, although there was a dip in score for 6 days. Of the tweets where geolocation data was available a large number were from North America and Europe, indicating a confounding factor such as media coverage; however the remaining tweets often originated from countries where the outbreak is manifested.
+
+There are some limitations to this study. The data only spans `r length(unique(data_cat$created_days))` days, so inference on trends over time is limited. The source of data may also be biased as the population of tweeters may not reflect the population as a whole. In addition, the sentiment analysis could only be performed on English words due to the available lexicons. Geospatial analysis was limited as location data was only available for a small percentage of tweets. The relatively high number of tweets located in North America and Europe may indicate that this data should not be used as the sole tool when assessing the spread of Zika virus.
+
+Despite this, with such a large sample size there is a wide variety of sentiments and opinions available to delve into. The ease of obtaining tweets and the near real-time data available make it an exciting arena for further development in public health awareness and response.
+
+## References
+AFINN. 2011. Accessed May 10, 2016 via http://www2.imm.dtu.dk/pubdb/views/publication_details.php?id=6010
+
+Centers for Disease Control and Prevention. May 12, 2016. "All Countries and Territories with Active Zika Virus Transmission." Accessed May 15, 2016 via  http://www.cdc.gov/zika/geo/active-countries.html
+
+Julia Slige. April 29, 2016. "The Life-Changing Magic of Tidying Text." Accessed April 29, 2016 via http://juliasilge.com/blog/Life-Changing-Magic/
